@@ -37,7 +37,7 @@ The flight computer is organised around the following functional domains:
 - Pyrotechnic deployment and safety circuitry
 
 Each domain was designed and reviewed independently before system integration.
-![FlightComputer FC1 - System Block Diagram](docs/block diagramfc1.png)
+![FlightComputer FC1 - System Block Diagram](docs/block_diagramfc1.png)
 
 ---
 
