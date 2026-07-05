@@ -10,7 +10,7 @@ The board integrates power management, RF telemetry, GNSS, redundant sensing, mi
 ## Key Features
 - 4-Layer PCB with Continuous ground reference for signal and power integrity
 - Single-stage 12 V -> 3.3 V power architecture using TI TPS563200
-- RF telemetry interface for real-time flight data
+- RF telemetry interface at 868 MHz for real-time flight data
 - GNSS L1 integration for flight data logging and recovery
 - Onboard barometric sensor with expansion interface for a secondary barometer
 - SD card interface for onboard data logging
