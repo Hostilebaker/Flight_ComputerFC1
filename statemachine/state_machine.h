@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include "mission_config.h"
 
-//state machine for the flight computer
+//state machine for the flight computer CORTEX-10K 
 
 enum class FlightState : uint8_t {
     STANDBY = 0,
@@ -15,14 +15,12 @@ enum class FlightState : uint8_t {
     LANDED
 };
 
-//plain data snapshot passed into the state machine each loop.
-//driver modules (IMU, baro, GPS, etc.) fill this; the state
-//machine does not know how to talk to any sensor directly.
-//this keeps state logic testable without real hardware.
+//plain data snapshot passed into the state machine each loop, driver modules (IMU, baro, GPS, etc.) fill this; the state
+//machine does not know how to talk to any sensor directly this keeps state logic testable without having hardware
 struct SensorData {
     //IMU
     float accel_x_g;
-    float accel_y_g;   //assuming Y is the thrust axis
+    float accel_y_g;   //assuming Y is the thrust axis change if needed
     float accel_z_g;
     bool  imu_valid;
 
@@ -44,11 +42,10 @@ struct SensorData {
     uint32_t timestamp_ms;
 };
 
-//output commands the state machine wants executed this loop.
-//kept separate from SensorSnapshot so the state machine is a
-//pure function of (state, snapshot) -> (new state, commands).
+//output commands the state machine wants executed this loop, kept separate from SensorData so the state machine is a
+//pure function of (state, data) -> (new state, commands)
 struct FlightCommands {
-    bool fire_pyro[NUM_PYRO_CHANNELS];//edge-triggered fire request
+    bool fire_pyro[NUM_PYRO_CHANNELS];//edge triggered fire request
     uint16_t telemetry_rate_hz;
     uint8_t  rgb_r, rgb_g, rgb_b;
     bool     buzzer_on;
@@ -59,42 +56,40 @@ class StateMachine {
 public:
     StateMachine();
 
-    //call every loop with the latest sensor snapshot.
-    //returns commands to execute this cycle.
+    //call every loop with the latest sensor data packet, returns commands to execute this cycle
     FlightCommands update(const SensorData& snap);
 
     FlightState getState() const { return currentState; }
     const char* getStateName() const;
 
-    //which pyro channels are assigned to which event.
-    //configure once at startup
-    void setBoostPyroChannel(uint8_t channel);//which channel = ignition confirm (usually N/A, boost is motor-lit)
+    //which pyro channels are assigned to which event, configure this at startup 
+    void setBoostPyroChannel(uint8_t channel);//which channel = ignition confirm (usually none or n/a, boost is motor lit)
     void setApogeePyroChannels(uint8_t ch1, uint8_t ch2);//drogue/main or both mains
 
 private:
     FlightState currentState;
     uint32_t stateEnteredAt_ms;
 
-    //boost/burnout tracking
+    //boost/burnout
     bool boostDetected;
     uint32_t boostStartTime_ms;
     uint8_t zeroGConsecutiveCount;
     uint32_t burnoutConfirmedTime_ms;
     bool burnoutConfirmed;
 
-    //apogee tracking
+    //apogee
     float rollingMaxAltitude_m;
     uint8_t baroApogeeConsecutiveCount;
     bool apogeeFired;
 
-    //landed tracking
+    //landed
     float lastAltitude_m;
     uint8_t landedConsecutiveCount;
 
     //pyro config
     uint8_t apogeeChannel1, apogeeChannel2;
 
-    //edge-triggered fire latches so we command each pyro exactly once
+    //edge triggered fire latches so we command each pyro only once
     bool pyroFireLatched[NUM_PYRO_CHANNELS];
 
     //per-state handlers
