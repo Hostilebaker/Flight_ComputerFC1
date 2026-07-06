@@ -9,14 +9,14 @@
 #define PIN_SPI_SCK 36 //SCK/SCL
 #define PIN_SPI_MISO 37 //SDO
 
-//spi chip select (active LOW unless noted)
-#define PIN_CS_RF95 4 //RFM95W chip select
-#define PIN_CS_SD 16 //SD card CS (has 4.7k pull-up, active LOW)
-#define PIN_CS_BARO_ONBOARD 34 //BMP390L onboard barometer CS
+//spi chip select (active LOW unless )
+#define PIN_CS_RF95 4 //rf module chip select
+#define PIN_CS_SD 16 //SD card module chip select
+#define PIN_CS_BARO_ONBOARD 34 //onboard barometer chip select
 #define PIN_CS_BARO_EXT 47 //expansion / nose-cone barometer CS
 #define PIN_CS_TEMP 33 //MAX31855 thermocouple CS
 
-//RFM95W setup
+//rf module setup
 #define PIN_RF_RESET 5   //active LOW reset
 #define PIN_RF_DIO0 6   //TX/RX done interrupt
 #define PIN_RF_DIO1 7   //FHSS / timeout interrupt
@@ -48,14 +48,12 @@
 #define PIN_RGB_BLUE 42
 
 //buzzer
-#define PIN_BUZZER 45 //strapping pin
-//DO NOT DRIVE HIGH BEFORE SETUP()/BOOT COMPLETION.
+#define PIN_BUZZER 45 //strapping pin DO NOT DRIVE HIGH BEFORE SETUP/BOOT COMPLETION.
 
 //expansion ports
-#define PIN_EXPANSION_46 46 //strapping pin - do not pull HIGH at startup
-//DO NOT DRIVE HIGH BEFORE SETUP()/BOOT COMPLETION.
+#define PIN_EXPANSION_46 46 //strapping pin - DO NOT DRIVE HIGH BEFORE SETUP/BOOT COMPLETION.
 
-//battery voltage check
+//battery voltage checking
 #define PIN_VBAT_SENSE 15 //ADC1 channel, battery voltage divider
 
 #endif // PINS_H
