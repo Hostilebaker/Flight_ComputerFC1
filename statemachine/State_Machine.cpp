@@ -126,7 +126,7 @@ FlightCommands StateMachine::update(const SensorData& snap) {
 //standby -> ready
 FlightState StateMachine::handleStandby(const SensorData& s) {
     //gate on GPS lock + sat count, valid baro, valid IMU, RF link up; this function assumes the caller (main loop) is already tracking
-    //n valid samples upstream via the sensor drivers - here we just check the instantaneous valid flags plus sat count, since sample
+    //n valid samples upstream via the sensor drivers, here we just check the instantaneous valid flags plus sat count, since sample
     //counting belongs with the driver, not the state machine
     bool gpsOk  = s.gps_lock && (s.gps_satellites >= READY_MIN_SATELLITES);
     bool baroOk = s.baro_valid;
@@ -140,10 +140,7 @@ FlightState StateMachine::handleStandby(const SensorData& s) {
 }
 
 //ready -> boost
-//boost begins the moment sustained high-g is sensed, the vehicle will boost whether or not pyros are armed, and we still want telemetry
-//to reflect reality, but note: if armed_switch_on is false, the pyro fire commands later in APOGEE will still be controlled by
-//hardware (manual switch cuts power to MOSFET channels) - firmware mirrors that by never asserting fire_pyro if switch is off, as a
-//second layer of protection
+//boost begins the moment sustained high-g is sensed
 FlightState StateMachine::handleReady(const SensorData& s) {
     if (!s.imu_valid) return FlightState::READY;
 
@@ -159,24 +156,21 @@ FlightState StateMachine::handleReady(const SensorData& s) {
 
 //boost -> apogee
 //burnout detection with debounce -> require BURNOUT_DEBOUNCE_SAMPLES
-//consecutive samples inside the zero-g band before declaring burnout, this is what filters out the +g/0g/-g/0g/+g inertial oscillation, a single in-band sample proves
-//nothing, but N in a row (spaced at the IMU sample interval) means the airframe has actually settled into coast.
+//consecutive samples inside the zero-g band before declaring burnout, this is what filters out the +g/0g/-g/0g/+g inertial oscillation
 //once burnout is confirmed, we move into APOGEE state, but APOGEE state itself enforces the coast lockout before it will
 //look at apogee detection at all, BOOST's job is just to detect burnout and hand off
 FlightState StateMachine::handleBoost(const SensorData& s, FlightCommands& cmd) {
     uint32_t elapsed = s.timestamp_ms - boostStartTime_ms;
 
-    //hard ceiling failsafe -> if boost has run longer than real
-    //motor burntime (as per a 20-30s burntime), something is wrong
-    //with detection - force the transition anyway rather than
-    //getting stuck in boost forever
+    //hard ceiling failsafe -> if boost has run longer than simulated motor burntime (as per a 20-30s burntime), something may be wrong
+    //with detection so force the transition inot apogee rather than staying stuck in boost
     if (elapsed >= BOOST_MAX_DURATION_MS) {
         resetApogeeTracking();
         return FlightState::APOGEE;
     }
 
     if (!s.imu_valid) {
-        //losing IMU mid-boost, fall back to the hard timer alone for this flight (handled by the ceiling check above every cycle)
+        //losing IMU mid-boost, fall back to the hard timer alone for this flight
         return FlightState::BOOST;
     }
 
@@ -199,15 +193,14 @@ FlightState StateMachine::handleBoost(const SensorData& s, FlightCommands& cmd) 
 }
 
 //apogee -> freefall
-//three layers, in priority order:
 //1.coast lockout - refuse to even evaluate apogee logic until COAST_LOCKOUT_MIN_MS has passed since burnout, this alone
-//should get rid of the inertial-oscillation misfire risk, since that oscillation only lasts tens of ms, nowhere near the lockout
+//should get rid of the inertial oscillation misfire risk, since that oscillation only lasts tens of ms, nowhere near the lockout
 //
 //2.barometric primary detection - altitude rolling max stops increasing for BARO_APOGEE_CONFIRM_SAMPLES in a row, immune
-//to IMU vibration/noise, reliable through coast which is dominated by air drag IMU zero-g/sign vote is logged but not required, baro alone
+//to imu vibration/noise, reliable through coast which is dominated by air drag imu zero-g/sign vote is logged but not required, baro alone
 //is sufficient to fire, since baro is the better sensor for this specific event + we will have an additional one in the nosecone so that also helps 
 //
-//3.hard timeout backup - APOGEE_HARD_TIMEOUT_MS since liftoff (approximated here as since boost start) with NO confirmation
+//3.hard timeout backup - APOGEE_HARD_TIMEOUT_MS since liftoff with NO confirmation
 //yet -> fire anyway; last-resort failsafe if there is a total sensor loss....
 FlightState StateMachine::handleApogee(const SensorData& s, FlightCommands& cmd) {
     uint32_t sinceBurnout = s.timestamp_ms - burnoutConfirmedTime_ms;
