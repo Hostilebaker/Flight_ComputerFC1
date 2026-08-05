@@ -8,6 +8,7 @@
 #include <Adafruit_Sensor.h>
 #include <LittleFS.h>
 #include <SD.h>
+#include <TinyGPS++.h>
 
 //pin defs
 //spi bus
@@ -101,7 +102,7 @@ bool sdDump = false;
 
 //20 packet ram buffer before flushing to flash
 #define BUFFER_SIZE 20
-TelemetryPacker logBuffer[BUFFER_SIZE];
+TelemetryPacket logBuffer[BUFFER_SIZE];
 uint8_t bufferIndex = 0;
 
 void setRGB(uint8_t r, uint8_t g, uint8_t b) {
@@ -109,12 +110,20 @@ void setRGB(uint8_t r, uint8_t g, uint8_t b) {
   analogWrite(rgb_green, g);
   analogWrite(rgb_blue, b);
 }
-
+void triggerGPSReset(){
+  Serial.println(F("[GPS] triggering gps reset pulse..."));
+  pinMode(gps_reset, OUTPUT);
+  digitalWrite(gps_reset, LOW);
+  delay(50); //>10ms pulse reqd. as per the datasheet of lc76gabmd
+  digitalWrite(gps_reset, HIGH);
+  pinMode(gps_reset, INPUT);
+  lastGPSResetAttempt = millis();
+}
 void flushBufferToFlash(){
   if (bufferIndex == 0) return;
   File flashFile = LittleFS.open("/flightLog.bin", "a"); //append binary
   if (flashFile){
-    flashFile.Write((uint8_t*)logBuffer, bufferIndex * sizeof(TelemetryPacket));
+    flashFile.write((uint8_t*)logBuffer, bufferIndex * sizeof(TelemetryPacket));
     flashFile.close();
     bufferIndex = 0; //reset buffer
   }
@@ -186,6 +195,8 @@ void setup(){
   pinMode(gps_reset, OUTPUT);
   digitalWrite(gps_reset, HIGH);
   setRGB(0,0,255); //fc boots in blue color
+  gpsSerial.begin(115200, SERIAL_8N1, gps_rxd, gps_txd); //gps module init at 115200 baudrate
+  
   //LittleFS internal flash init
   if (!LittleFS.begin(true)){
     Serial.println(F("[STORAGE] LittleFS mount failed!"));
@@ -217,3 +228,22 @@ void setup(){
   radio.begin(865.0, 125.0, 9, 7, RADIOLIB_SX127X_SYNC_WORD, 17);
   Serial.println(F("All Sensors Online, FC ready for flight."));
 }
+
+void loop(){
+  uint32_t now = millis();
+  bool isArmed = (digitalRead(user_sw) == LOW);
+  float vbatVolts = (analogRead(vbat_sense) / 4095.0f) *3.3f*2.0f;
+  if (bmpOnboard.performReading()){
+    float baroAlt = bmpOnboard.readAltitude(sealevel_HPA);
+    if (baroAlt > maxAlt){
+      maxAlt = baroAlt;
+      baroFallingCount = 0;
+    } else{
+      baroFallingCount++;
+    }
+  }
+  sensors_event_t accelEvent, gyroEvent, tempEvent;
+  mpu.getEvent(&accelEvent, &gyroEvent, &tempEvent);
+  float totalAccel_G = sqrtf((accelEvent.acceleration.x*accelEvent.acceleration.x)+(accelEvent.acceleration.y*accelEvent.acceleration.y)+(accelEvent.acceleration.z*accelEvent.acceleration.z)) / 9.80665f;
+
+  
