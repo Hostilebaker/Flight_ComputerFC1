@@ -1,1 +1,219 @@
+#include <Arduino.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <RadioLib.h>
+#include <Adafruit_MAX31855.h>
+#include <Adafruit_BMP3XX.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_Sensor.h>
+#include <LittleFS.h>
+#include <SD.h>
 
+//pin defs
+//spi bus
+#define spi_sck 36
+#define spi_miso 37
+#define spi_mosi 35
+//i2c bus
+#define i2c_sda 8
+#define i2c_scl 17
+//cs lines
+#define rf_cs 4
+#define sd_cs 16
+#define cs_temp 33
+#define cs_baro 34
+#define cs_baro2 47
+//mosfet outputs
+#define Pyro1 14 //drogue chute at apogee
+#define Pyro2 2 //main chute at 1kfeet (304m)
+#define Pyro3 9
+#define Pyro4 1
+//rf
+#define rf_reset 5
+#define dio0 6
+#define dio1 7
+//status led
+#define rgb_red 40
+#define rgb_green 41
+#define rgb_blue 42
+#define buzzer 45
+#define gps_reset 3
+#define vbat_sense 15 //analog
+#define armed
+
+#define sealevel_HPA (1013.25f)
+
+//parameters
+#define boostConfirm 3.0f //3g accel threshold for boost state
+#define timetoApogee 30000 //going by 30s max time to apogee
+#define apogeeDuration 3000 //apogee state lasts for 3 seconds
+#define Pyro2Deploy 304.8f //main parachute deploument at 1k feet or 304.8m
+
+//flight states
+enum FlightState {
+  Safe = 0,
+  Armed,
+  Boost,
+  Apogee,
+  Descent,
+  Landed
+};
+struct __attribute__((packed)) TelemetryPacket { //forces the compiler to remove hidden padding bytes and guarantees 25 bytes packet everywhere
+  //normal "struct TelemetryPacket" would leave byte alignment upto the cpu, no guarantee of perfect alignment of bits with reciever because
+  //it would add padding bits to the transmitted packet
+  uint32_t timestamp_ms; //milliseconds since boot -> better accuracy for 200hz
+  int32_t gps_lat;
+  int32_t gps_lon; //gps lat, lon * 10000 
+  int16_t accel_x;
+  int16_t accel_y;
+  int16_t accel_z; //accel x, y, z * 10000
+  int16_t gyro_x;
+  int16_t gyro_y;
+  int16_t gyro_z; //gyro x, y, z * 10000
+  uint8_t battery; //volts*10
+  int8_t rssi; //dBm
+  uint8_t flags; //deploy and status bitmask
+};
+
+SPIClass sharedSPI(FSPI);
+SX1276 radio = new Module(rf_cs, dio0, rf_reset, dio1, sharedSPI);
+Adafruit_MAX31855 thermocouple(cs_temp, &sharedSPI);
+Adafruit_BMP3XX bmpOnboard;
+Adafruit_MPU6050 mpu;
+
+//global state variables
+FlightState currentState = Safe; //fc boots up in safe state
+uint32_t stateBegin = 0; 
+uint32_t boostBegin = 0;
+float maxAlt = -999.0f;
+uint8_t baroFallingCount = 0;
+bool drogueFired = false;
+bool mainFired = false;
+uint32_t drogueFireStart = 0;
+uint32_t mainFireStart = 0;
+bool droguePulseActive = false;
+bool mainPulseActive = false;
+
+uint32_t lastLogTime = 0;
+uint32_t lastTelemetryTime = 0;
+uint32_t flashLog = 0;
+bool sdDump = false;
+
+//20 packet ram buffer before flushing to flash
+#define BUFFER_SIZE 20
+TelemetryPacker logBuffer[BUFFER_SIZE];
+uint8_t bufferIndex = 0;
+
+void setRGB(uint8_t r, uint8_t g, uint8_t b) {
+  analogWrite(rgb_red, r);
+  analogWrite(rgb_green, g);
+  analogWrite(rgb_blue, b);
+}
+
+void flushBufferToFlash(){
+  if (bufferIndex == 0) return;
+  File flashFile = LittleFS.open("/flightLog.bin", "a"); //append binary
+  if (flashFile){
+    flashFile.Write((uint8_t*)logBuffer, bufferIndex * sizeof(TelemetryPacket));
+    flashFile.close();
+    bufferIndex = 0; //reset buffer
+  }
+}
+void logFlash (TelemetryPacket &pkt){
+  logBuffer[bufferIndex++] = pkt;
+  //dump to flash when buffer fills(~20seconds)
+  if (bufferIndex >= BUFFER_SIZE){
+    flushBufferToFlash();
+  }
+}
+void dumpIntoSD(){ //dumps flash memory into sd card once landed state is achieved
+  flushBufferToFlash();
+  Serial.println(F("[STORAGE] sd card init..."));
+  if (!SD.begin(sd_cs, sharedSPI)){
+    Serial.println(F("[STORAGE] sd card mount failed"));
+    return;
+  }
+  File flashFile = LittleFS.open("/flightLog.bin", "r");
+  if (!flashFile){
+    Serial.println(F("[STORAGE] no littleFS log found to dump"));
+    return;
+  }
+  File sdFile = SD.open("/flightLog.bin", FILE_APPEND);
+  if (!sdFile){
+    Serial.println(F("[STORAGE] failed to open sd /flightLog.bin for writing"));
+    flashFile.close();
+    return;
+  }
+  Serial.printf("[STORAGE] dumping %u packets from flash into sd...\n", flashFile.size());
+  uint8_t chunkBuffer[256];
+  while(flashFile.available()){
+    size_t bytesRead = flashFile.read(chunkBuffer, sizeof(chunkBuffer));
+    sdFile.write(chunkBuffer, bytesRead);
+  }
+  flashFile.close();
+  sdFile.close();
+  Serial.println(F("[STORAGE] flash to sd dump complete..."));
+  sdDump = true;
+}
+
+void setup(){
+  Serial.begin(115200);
+  //chip select pins ar active-LOW, hence pulling everything high before SPI is init, no sensor is selected
+  pinMode(rf_cs, OUTPUT);
+  digitalWrite(rf_cs, HIGH);
+  pinMode(sd_cs, OUTPUT);
+  digitalWrite(sd_cs, HIGH);
+  pinMode(cs_temp, OUTPUT);
+  digitalWrite(cs_temp, HIGH);
+  pinMode(cs_baro, OUTPUT);
+  digitalWrite(cs_baro, HIGH);
+  pinMode(cs_baro2, OUTPUT);
+  digitalWrite(cs_baro2, HIGH);
+  //safety off for pyrochannels
+  digitalWrite(Pyro1, LOW);
+  pinMode(Pyro1, OUTPUT);
+  digitalWrite(Pyro2, LOW);
+  pinMode(Pyro2, OUTPUT);
+  digitalWrite(Pyro3, LOW);
+  pinMode(Pyro3, OUTPUT);
+  digitalWrite(Pyro4, LOW);
+  pinMode(Pyro4, OUTPUT);
+  pinMode(user_sw, INPUT_PULLUP);
+  pinMode(rgb_red, OUTPUT);
+  pinMode(rgb_green, OUTPUT);
+  pinMode(rgb_blue, OUTPUT);
+  pinMode(buzzer, OUTPUT);
+  pinMode(gps_reset, OUTPUT);
+  digitalWrite(gps_reset, HIGH);
+  setRGB(0,0,255); //fc boots in blue color
+  //LittleFS internal flash init
+  if (!LittleFS.begin(true)){
+    Serial.println(F("[STORAGE] LittleFS mount failed!"));
+  } else{
+    Serial.println(F("[STORAGE] LittleFS flash storage ready"));
+  }
+
+  //spi init
+  sharedSPI.begin(spi_sck, spi_miso, spi_mosi);
+  //i2c init
+  Wire.begin(i2c_sda, i2c_scl, 400000);
+  //onboard baro init
+  if (!bmpOnboard.begin_SPI(cs_baro, &sharedSPI)){
+    Serial.println(F("BMP384 init failed"));
+  } else{
+    bmpOnboard.setTemperatureOversampling(BMP3_OVERSAMPLING_4X);
+    bmpOnboard.setPressureOversampling(BMP3_OVERSAMPLING_8X);
+  }
+  //imu init with i2c
+  if (!mpu.begin(0x68, &Wire)){
+    Serial.println(F("MPU6500 init failed"));
+  } else {
+    mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
+    mpu.setFilterBandwidth(MPU6050_BAND_94_HZ); //higher bw for 200hz logging
+  }
+  //thermocouple init
+  thermocouple.begin();
+  //radio init
+  radio.begin(865.0, 125.0, 9, 7, RADIOLIB_SX127X_SYNC_WORD, 17);
+  Serial.println(F("All Sensors Online, FC ready for flight."));
+}
