@@ -307,3 +307,36 @@ switch (currentState){
     } break;
   case Descent:
     setRGB(0, 255, 255); //cyan color for descent state
+    if (!mainFired && bmpOnboard.altitude <= Pyro2Deploy) {
+      digitalWrite(Pyro2, HIGH);
+      mainPulseActive = true;
+      mainFireStart = now;
+      mainFired = true;
+    }
+    if (now - stateBegin > 60000 && bmpOnboard.altitude < 10.0f){
+      currentState = Landed;
+      stateBegin = now;
+    } break;
+  case Landed:
+    setRGB(255,255,0); //yellow color for landed state
+    digitalWrite(buzzer, HIGH);
+    if(!sdDump){
+      dumpIntoSD();
+    }break;
+}
+//time based safety cutoff for mosfet gate triggers
+if (droguePulseActive && (now - drogueFireStart >= 1000)){
+  digitalWrite(Pyro1, LOW);
+  droguePulseActive = false;
+}
+if(mainPulseActive && (now - mainFireStart >= 1000)){
+  digitalWrite(Pyro2, LOW);
+  mainPulseActive = false;
+}
+//variable rate flash logging to save space while descending
+uint32_t logInterval = 0;
+if(currentState == Boost|| currentState == Apogee) { 
+  logInterval = 5; //logs every 5ms = 200hz
+} else if (currentState == Descent) {
+  logInterval = 100; //logs every 100ms = 10hz
+}
