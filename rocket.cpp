@@ -5,7 +5,6 @@
 #include <Adafruit_MAX31855.h>
 #include <Adafruit_BMP3XX.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_Sensor.h>
 #include <LittleFS.h>
 #include <SD.h>
 #include <TinyGPS++.h>
@@ -39,8 +38,11 @@
 #define rgb_blue 42
 #define buzzer 45
 #define gps_reset 3
+#define gps_txd 13
+#define gps_rxd 48
+#define gps_led 18
 #define vbat_sense 15 //analog
-#define armed
+#define user_sw 0
 
 #define sealevel_HPA (1013.25f)
 
@@ -49,6 +51,7 @@
 #define timetoApogee 30000 //going by 30s max time to apogee
 #define apogeeDuration 3000 //apogee state lasts for 3 seconds
 #define Pyro2Deploy 304.8f //main parachute deploument at 1k feet or 304.8m
+#define GPS_LOCK_TIMEOUT_MS 10000 //10s gps timeout constant
 
 //flight states
 enum FlightState {
@@ -96,17 +99,18 @@ uint32_t drogueFireStart = 0;
 uint32_t mainFireStart = 0;
 bool droguePulseActive = false;
 bool mainPulseActive = false;
-
 uint32_t lastLogTime = 0;
 uint32_t lastTelemetryTime = 0;
 uint32_t flashLog = 0;
 bool sdDump = false;
-
+int32_t currentLatScaled = 0;
+int32_t currentLonScaled = 0;
+bool gpsHasFix = false;
+uint32_t lastGPSResetAttempt = 0;
 //20 packet ram buffer before flushing to flash
 #define BUFFER_SIZE 20
 TelemetryPacket logBuffer[BUFFER_SIZE];
 uint8_t bufferIndex = 0;
-
 void setRGB(uint8_t r, uint8_t g, uint8_t b) {
   analogWrite(rgb_red, r);
   analogWrite(rgb_green, g);
@@ -254,7 +258,7 @@ void loop(){
       gps.encode(gpsSerial.read());
     }
     if (gps.location.isValid()){
-      gpsHaxFix = true;
+      gpsHasFix = true;
       digitalWrite(gps_led, HIGH); //turn on the gps lock led once location fix is achieved
       currentLatScaled = (int32_t)(gps.location.lat()*10000.0f);
       currentLonScaled = (int32_t)(gps.location.lng()*10000.0f);
