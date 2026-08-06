@@ -340,3 +340,48 @@ if(currentState == Boost|| currentState == Apogee) {
 } else if (currentState == Descent) {
   logInterval = 100; //logs every 100ms = 10hz
 }
+if (logInterval > 0 && (now - lastLogTime >= logInterval)) {
+  TelemetryPacket pkt;
+  pkt.timestamp_ms = now;
+  pkt.gps_lat = currentLatScaled;
+  pkt.gps_lon = currentLonScaled;
+  pkt.accel_x = (int16_t)(accelEvent.acceleration.x * 10000.0f);
+  pkt.accel_y = (int16_t)(accelEvent.acceleration.y * 10000.0f);
+  pkt.accel_z = (int16_t)(accelEvent.acceleration.z * 10000.0f);
+  pkt.gyro_x= (int16_t)(gyroEvent.gyro.x * 10000.0f);
+  pkt.gyro_y= (int16_t)(gyroEvent.gyro.y * 10000.0f);
+  pkt.gyro_z = (int16_t)(gyroEvent.gyro.z * 10000.0f);
+  pkt.battery = (uint8_t)(vbatVolts * 10.0f);
+  pkt.rssi = (int8_t)radio.getRSSI();
+  pkt.flags = 0;
+  if (isArmed) pkt.flags |= (1 << 0);
+  pkt.flags |= (currentState & 0x07) << 1;
+  if (droguePulseActive) pkt.flags |= (1 << 4);
+  if (mainPulseActive) pkt.flags |= (1 << 5);
+  logFlash(pkt);
+  lastLogTime = now;
+}
+//live telemetry transmission at 1 hz
+if (now - lastTelemetryTime >= 1000) {
+  TelemetryPacket radioPkt;
+  radioPkt.timestamp_ms = now;
+  radioPkt.gps_lat = currentLatScaled;
+  radioPkt.gps_lon = currentLonScaled;
+  radioPkt.accel_x = (int16_t)(accelEvent.acceleration.x * 10000.0f);
+  radioPkt.accel_y = (int16_t)(accelEvent.acceleration.y * 10000.0f);
+  radioPkt.accel_z= (int16_t)(accelEvent.acceleration.z * 10000.0f);
+  radioPkt.gyro_x = (int16_t)(gyroEvent.gyro.x * 10000.0f);
+  radioPkt.gyro_y = (int16_t)(gyroEvent.gyro.y * 10000.0f);
+  radioPkt.gyro_z= (int16_t)(gyroEvent.gyro.z * 10000.0f);
+  radioPkt.battery = (uint8_t)(vbatVolts * 10.0f);
+  radioPkt.rssi= (int8_t)radio.getRSSI();
+  radioPkt.flags = 0;
+  if (isArmed) radioPkt.flags |= (1 << 0);
+  radioPkt.flags |= (currentState & 0x07) << 1;
+  if (droguePulseActive) radioPkt.flags |= (1 << 4);
+  if (mainPulseActive) radioPkt.flags |= (1 << 5);
+  radio.transmit((uint8_t*)&radioPkt, sizeof(TelemetryPacket));
+  lastTelemetryTime = now;
+}
+  delayMicroseconds(500);
+}
