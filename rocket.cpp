@@ -319,7 +319,7 @@ switch (currentState){
       mainFireStart = now;
       mainFired = true;
     }
-    if (now - stateBegin > 60000 && bmpOnboard.altitude < 10.0f){
+    if (now - stateBegin > 60000 && baroAlt < 10.0f){
       currentState = Landed;
       stateBegin = now;
     } break;
