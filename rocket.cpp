@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <RadioLib.h>
 #include <Adafruit_MAX31855.h>
+#include <Adafruit_MPU6050.h>
 #include <Adafruit_BMP3XX.h>
 #include <Adafruit_Sensor.h>
 #include <LittleFS.h>
@@ -241,8 +242,9 @@ void loop(){
   uint32_t now = millis();
   bool isArmed = (digitalRead(user_sw) == LOW);
   float vbatVolts = (analogRead(vbat_sense) / 4095.0f) *3.3f*2.0f;
+  float baroAlt = 0.0f;
   if (bmpOnboard.performReading()){
-    float baroAlt = bmpOnboard.readAltitude(sealevel_HPA);
+    baroAlt = bmpOnboard.readAltitude(sealevel_HPA);
     if (baroAlt > maxAlt){
       maxAlt = baroAlt;
       baroFallingCount = 0;
@@ -311,7 +313,7 @@ switch (currentState){
     } break;
   case Descent:
     setRGB(0, 255, 255); //cyan color for descent state
-    if (!mainFired && bmpOnboard.altitude <= Pyro2Deploy) {
+    if (!mainFired && baroAlt <= Pyro2Deploy) {
       digitalWrite(Pyro2, HIGH);
       mainPulseActive = true;
       mainFireStart = now;
