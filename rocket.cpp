@@ -81,6 +81,8 @@ SX1276 radio = new Module(rf_cs, dio0, rf_reset, dio1, sharedSPI);
 Adafruit_MAX31855 thermocouple(cs_temp, &sharedSPI);
 Adafruit_BMP3XX bmpOnboard;
 Adafruit_MPU6050 mpu;
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(1);
 
 //global state variables
 FlightState currentState = Safe; //fc boots up in safe state
@@ -194,6 +196,8 @@ void setup(){
   pinMode(buzzer, OUTPUT);
   pinMode(gps_reset, OUTPUT);
   digitalWrite(gps_reset, HIGH);
+  pinMode(gps_led, OUTPUT);
+  digitalWrite(gps_led, LOW); //off until a gps fix is achieved
   setRGB(0,0,255); //fc boots in blue color
   gpsSerial.begin(115200, SERIAL_8N1, gps_rxd, gps_txd); //gps module init at 115200 baudrate
   
@@ -245,5 +249,61 @@ void loop(){
   sensors_event_t accelEvent, gyroEvent, tempEvent;
   mpu.getEvent(&accelEvent, &gyroEvent, &tempEvent);
   float totalAccel_G = sqrtf((accelEvent.acceleration.x*accelEvent.acceleration.x)+(accelEvent.acceleration.y*accelEvent.acceleration.y)+(accelEvent.acceleration.z*accelEvent.acceleration.z)) / 9.80665f;
+  if(currentState == Apogee||currentState == Descent||currentState == Landed){
+    while(gpsSerial.available()>0){
+      gps.encode(gpsSerial.read());
+    }
+    if (gps.location.isValid()){
+      gpsHaxFix = true;
+      digitalWrite(gps_led, HIGH); //turn on the gps lock led once location fix is achieved
+      currentLatScaled = (int32_t)(gps.location.lat()*10000.0f);
+      currentLonScaled = (int32_t)(gps.location.lng()*10000.0f);
+    } else{
+      gpsHasFix = false;
+      digitalWrite(gps_led, LOW); //keep led off when lock is lost or searching
+      if(now - lastGPSResetAttempt >= GPS_LOCK_TIMEOUT_MS){
+        triggerGPSReset(); //reset and retry gps module re-acquisition
+      }
+    }
+  }
 
-  
+//statemachine
+switch (currentState){
+  case Safe:
+    setRGB(0,255,0); //green for safe state
+    digitalWrite(buzzer, LOW);
+    if (isArmed){
+      currentState = Armed;
+      stateBegin = now;
+    } break;
+  case Armed:
+    setRGB(255, 0,0); //red for armed state
+    if (!isArmed){
+      currentState = Safe;
+    } else if (totalAccel_G >= boostConfirm){
+      currentState = Boost;
+      boostBegin = now;
+      stateBegin = now;
+    } break;
+  case Boost:
+    setRGB(255,0,0); //continue in red for boost state
+    if(baroFallingCount >= 5|| (now - boostBegin >= timetoApogee)){
+      currentState = Apogee;
+      stateBegin = now;
+      triggerGPSReset(); //immediately at state shift into apogee state, signal gps module to reset to start recovery
+    }
+    break;
+  case Apogee:
+    setRGB(255,128,0); //orange for apogee state
+    if (!drogueFired){
+      digitalWrite(Pyro1, HIGH);
+      droguePulseActive = true;
+      drogueFireStart = now;
+      drogueFired = true;
+    }
+    if(now - stateBegin >= apogeeDuration){
+      currentState = Descent;
+      stateBegin = now;
+    } break;
+  case Descent:
+    setRGB(0, 255, 255); //cyan color for descent state
